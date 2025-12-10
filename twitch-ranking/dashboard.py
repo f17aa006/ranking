@@ -133,7 +133,6 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     summary["視聴者増加率"] = summary["視聴者数増加量"] / summary["初回視聴者数"].replace(0, 1)
 
     # 成長スコア（ざっくり：増加率＋ランク改善＋競争率を混ぜたもの）
-    # 係数は感覚調整用。とりあえず「伸びてて、順位も上がってて、競争率もそこそこ」のものが高く出るようにしてる。
     summary["成長スコア"] = (
         summary["視聴者増加率"] * 50
         + (summary["ランク改善量"] / summary["初回ランク"].replace(0, 1)) * 30
@@ -235,7 +234,7 @@ def main():
         "カテゴリ",
         "成長タイプ",
         "成長スコア",
-        "視聴者増加量",
+        "視聴者数増加量",      # ← ここを「数」ありに合わせた
         "視聴者増加率",
         "ランク改善量",
         "最新視聴者数",
@@ -304,7 +303,7 @@ def main():
     col1, col2, col3 = st.columns(3)
     col1.metric("成長タイプ", cat_summary["成長タイプ"])
     col2.metric("成長スコア", f"{cat_summary['成長スコア']:.2f}")
-    col3.metric("視聴者増加量", int(cat_summary["視聴者数増加量"]))
+    col3.metric("視聴者数増加量", int(cat_summary["視聴者数増加量"]))
 
     col4, col5, col6 = st.columns(3)
     col4.metric("視聴者増加率", f"{cat_summary['視聴者増加率']:.2f}")
