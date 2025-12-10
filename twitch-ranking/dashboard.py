@@ -54,8 +54,27 @@ def load_history():
     return df_all, None
 
 
+def classify_growth_type(row) -> str:
+    """視聴者増加率・ランク改善・平均競争率から成長タイプをざっくり分類"""
+    growth_rate = row["視聴者増加率"]  # 初回→最新の割合
+    rank_improve = row["ランク改善量"]  # 正ならランクUP
+    avg_comp = row["平均競争率"]
+
+    # かなり強気な伸び
+    if growth_rate > 0.8 and rank_improve > 15:
+        return "🚀 急成長"
+    # しっかり右肩上がり
+    if growth_rate > 0.3 and rank_improve > 5:
+        return "📈 成長"
+    # ほぼ現状維持（微増〜微減）
+    if growth_rate > -0.1:
+        return "😐 横ばい"
+    # 明確に落ちている
+    return "📉 下降"
+
+
 def build_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """カテゴリごとの累計・平均・最大・初回/最新などまとめたサマリを作る"""
+    """カテゴリごとの累計・平均・最大・成長情報などまとめたサマリを作る"""
 
     # 基本集計＋ばらつき
     agg = df.groupby("name").agg(
@@ -111,11 +130,25 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     # 派生指標
     summary["視聴者数増加量"] = summary["最新視聴者数"] - summary["初回視聴者数"]
     summary["ランク改善量"] = summary["初回ランク"] - summary["最新ランク"]  # 正数ならランクUP
+    summary["視聴者増加率"] = summary["視聴者数増加量"] / summary["初回視聴者数"].replace(0, 1)
+
+    # 成長スコア（ざっくり：増加率＋ランク改善＋競争率を混ぜたもの）
+    # 係数は感覚調整用。とりあえず「伸びてて、順位も上がってて、競争率もそこそこ」のものが高く出るようにしてる。
+    summary["成長スコア"] = (
+        summary["視聴者増加率"] * 50
+        + (summary["ランク改善量"] / summary["初回ランク"].replace(0, 1)) * 30
+        + summary["平均競争率"] * 2
+    )
+
+    # 成長タイプラベル
+    summary["成長タイプ"] = summary.apply(classify_growth_type, axis=1)
 
     # 小数処理
     summary["平均視聴者数"] = summary["平均視聴者数"].round(1)
     summary["平均競争率"] = summary["平均競争率"].round(2)
     summary["視聴者数標準偏差"] = summary["視聴者数標準偏差"].fillna(0).round(1)
+    summary["視聴者増加率"] = summary["視聴者増加率"].round(2)
+    summary["成長スコア"] = summary["成長スコア"].round(2)
 
     summary = summary.reset_index().rename(columns={"name": "カテゴリ"})
 
@@ -123,8 +156,8 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main():
-    st.set_page_config(page_title="Twitch カテゴリ詳細分析", layout="wide")
-    st.title("📊 Twitch カテゴリ詳細分析ダッシュボード")
+    st.set_page_config(page_title="Twitch カテゴリ成長分析", layout="wide")
+    st.title("📊 Twitch カテゴリ成長分析ダッシュボード")
 
     df, error_msg = load_history()
 
@@ -150,18 +183,21 @@ def main():
     # ---- サイドバー設定 ----
     st.sidebar.header("⚙️ 表示設定")
 
-    # ランキング基準を選択
+    # ランキング基準（デフォルトは成長スコア）
     ranking_metric = st.sidebar.selectbox(
         "ランキング基準",
         [
+            "成長スコア",
             "累計視聴者数",
             "平均視聴者数",
             "最大視聴者数",
             "最新視聴者数",
             "平均競争率",
             "視聴者数増加量",
+            "視聴者増加率",
             "ランク改善量",
         ],
+        index=0,
     )
 
     # 最低データ数フィルタ
@@ -189,23 +225,24 @@ def main():
         st.warning("条件に合うカテゴリがありません。フィルタ条件を緩めてください。")
         st.stop()
 
-    # ランキング基準でソート
-    # ※ 全部「値が大きいほど良い」という扱いにしている
+    # ランキング基準でソート（大きいほど良い前提）
     filtered = filtered.sort_values(ranking_metric, ascending=False).reset_index(drop=True)
 
-    # ---- 累計ランキングテーブル ----
-    st.subheader(f"🎉 ランキング（基準：{ranking_metric}）")
+    # ---- ランキングテーブル ----
+    st.subheader(f"🎉 成長ランキング（基準：{ranking_metric}）")
 
     show_cols = [
         "カテゴリ",
+        "成長タイプ",
+        "成長スコア",
+        "視聴者増加量",
+        "視聴者増加率",
+        "ランク改善量",
+        "最新視聴者数",
         "累計視聴者数",
-        "累計配信者数",
         "平均視聴者数",
         "最大視聴者数",
-        "最新視聴者数",
         "平均競争率",
-        "視聴者数増加量",
-        "ランク改善量",
         "視聴者数標準偏差",
         "サンプル数",
         "初回取得日時",
@@ -225,11 +262,24 @@ def main():
         filtered.head(top_n),
         x="カテゴリ",
         y=ranking_metric,
+        color="成長タイプ",
         title=f"上位 {top_n} カテゴリの {ranking_metric}",
-        labels={"カテゴリ": "カテゴリ", ranking_metric: ranking_metric},
+        labels={"カテゴリ": "カテゴリ", ranking_metric: ranking_metric, "成長タイプ": "成長タイプ"},
     )
     fig_bar.update_layout(xaxis_tickangle=-45, height=500)
     st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ---- 成長タイプの説明 ----
+    st.markdown(
+        """
+### 成長タイプの意味
+
+- 🚀 **急成長**：視聴者増加率が大きく、ランクも大きく改善しているカテゴリ  
+- 📈 **成長**：視聴者数もランクもじわじわ良くなっているカテゴリ  
+- 😐 **横ばい**：大きな増減はなく、ほぼ現状維持のカテゴリ  
+- 📉 **下降**：視聴者減・ランク悪化が目立つカテゴリ  
+"""
+    )
 
     # ---- 選択したカテゴリの詳細 ----
     st.subheader("🔍 カテゴリ詳細")
@@ -250,22 +300,27 @@ def main():
     days = duration.days
     hours = int(duration.total_seconds() // 3600)
 
-    # 上段メトリクス（最新・累計・平均・最大・平均競争率・データ数）
+    # 上段メトリクス（成長系＋視聴者系）
     col1, col2, col3 = st.columns(3)
-    col1.metric("最新視聴者数", int(cat_summary["最新視聴者数"]))
-    col2.metric("累計視聴者数", int(cat_summary["累計視聴者数"]))
-    col3.metric("平均視聴者数", f"{cat_summary['平均視聴者数']:.1f}")
+    col1.metric("成長タイプ", cat_summary["成長タイプ"])
+    col2.metric("成長スコア", f"{cat_summary['成長スコア']:.2f}")
+    col3.metric("視聴者増加量", int(cat_summary["視聴者数増加量"]))
 
     col4, col5, col6 = st.columns(3)
-    col4.metric("最大視聴者数", int(cat_summary["最大視聴者数"]))
-    col5.metric("平均競争率", f"{cat_summary['平均競争率']:.2f}")
-    col6.metric("データ数（スナップショット数）", int(cat_summary["サンプル数"]))
+    col4.metric("視聴者増加率", f"{cat_summary['視聴者増加率']:.2f}")
+    col5.metric("ランク改善量（+でランクUP）", int(cat_summary["ランク改善量"]))
+    col6.metric("視聴者のばらつき（標準偏差）", f"{cat_summary['視聴者数標準偏差']:.1f}")
 
-    # 追加メトリクス（増加量・ランク改善・ばらつき）
+    # 下段メトリクス（最新・累計・平均・競争率・データ数）
     col7, col8, col9 = st.columns(3)
-    col7.metric("視聴者数増加量", int(cat_summary["視聴者数増加量"]))
-    col8.metric("ランク改善量（+でランクUP）", int(cat_summary["ランク改善量"]))
-    col9.metric("視聴者数のばらつき（標準偏差）", f"{cat_summary['視聴者数標準偏差']:.1f}")
+    col7.metric("最新視聴者数", int(cat_summary["最新視聴者数"]))
+    col8.metric("累計視聴者数", int(cat_summary["累計視聴者数"]))
+    col9.metric("平均視聴者数", f"{cat_summary['平均視聴者数']:.1f}")
+
+    col10, col11, col12 = st.columns(3)
+    col10.metric("最大視聴者数", int(cat_summary["最大視聴者数"]))
+    col11.metric("平均競争率", f"{cat_summary['平均競争率']:.2f}")
+    col12.metric("データ数（スナップショット数）", int(cat_summary["サンプル数"]))
 
     # 初回ランク・最新ランク・期間・ピーク情報
     st.markdown(
