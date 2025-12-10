@@ -47,53 +47,13 @@ def load_history():
 
     df_all = pd.concat(records, ignore_index=True)
     df_all["snapshot"] = pd.to_datetime(df_all["snapshot"])
-    df_all["competition_index"] = df_all["viewers"] / df_all["streamers"].replace(0, 1)
 
     return df_all, None
 
 
-def classify_market(df: pd.DataFrame) -> pd.DataFrame:
-    """カテゴリを市場タイプ（成長・衰退・飽和など）に分類"""
-    result = []
-
-    for name, g in df.groupby("name"):
-        g = g.sort_values("snapshot")
-        first, last = g.iloc[0], g.iloc[-1]
-
-        d_streamers = last["streamers"] - first["streamers"]
-        d_viewers = last["viewers"] - first["viewers"]
-
-        if d_viewers > 0 and d_streamers < 0:
-            status = "💎 狙い目（需要 > 供給）"
-        elif d_viewers > 0 and d_streamers > 0:
-            status = "🚀 成長市場（視聴者↑ 配信者↑）"
-        elif d_viewers < 0 and d_streamers > 0:
-            status = "⚠ 過剰供給（視聴者↓ 配信者↑）"
-        elif d_viewers < 0 and d_streamers < 0:
-            status = "📉 衰退市場（視聴者↓ 配信者↓）"
-        else:
-            status = "😐 安定（大きな変化なし）"
-
-        result.append(
-            {
-                "カテゴリ": name,
-                "市場タイプ": status,
-                "配信者推移": d_streamers,
-                "視聴者推移": d_viewers,
-                "最新視聴者数": last["viewers"],
-                "最新配信者数": last["streamers"],
-                "競争率（視聴÷配信）": round(
-                    last["viewers"] / max(last["streamers"], 1), 2
-                ),
-            }
-        )
-
-    return pd.DataFrame(result).sort_values("最新視聴者数", ascending=False)
-
-
 def main():
-    st.set_page_config(page_title="Twitch カテゴリ分析ダッシュボード", layout="wide")
-    st.title("📊 Twitch カテゴリ分析ダッシュボード")
+    st.set_page_config(page_title="Twitch 累計視聴者ランキング", layout="wide")
+    st.title("📊 Twitch カテゴリ累計視聴者ランキング")
 
     df, error_msg = load_history()
 
@@ -101,164 +61,64 @@ def main():
         st.error(error_msg)
         st.stop()
 
-    # 利用可能なスナップショット一覧
-    snapshots = sorted(df["snapshot"].unique())
-    snapshot_labels = [dt.strftime("%Y-%m-%d %H:%M") for dt in snapshots]
+    # ---- 基本情報 ----
+    min_snap = df["snapshot"].min()
+    max_snap = df["snapshot"].max()
+    total_snapshots = df["snapshot"].nunique()
+    total_categories = df["name"].nunique()
 
-    # ---- サイドバー ----
+    st.markdown(
+        f"データ期間：**{min_snap.strftime('%Y-%m-%d %H:%M')}**"
+        f" ～ **{max_snap.strftime('%Y-%m-%d %H:%M')}**　"
+        f"（スナップショット数：{total_snapshots}、カテゴリ数：{total_categories}）"
+    )
+
+    # ---- 累計視聴者数ランキング ----
+    st.subheader("🎉 累計視聴者数ランキング（全期間）")
+
+    # カテゴリごとの累計視聴者数を集計
+    total_viewers = (
+        df.groupby("name")["viewers"]
+        .sum()
+        .sort_values(ascending=False)
+        .reset_index()
+        .rename(columns={"name": "カテゴリ", "viewers": "累計視聴者数"})
+    )
+
+    # オプション：累計配信者数（参考）
+    total_streamers = (
+        df.groupby("name")["streamers"]
+        .sum()
+        .reset_index()
+        .rename(columns={"name": "カテゴリ", "streamers": "累計配信者数"})
+    )
+
+    summary = pd.merge(total_viewers, total_streamers, on="カテゴリ", how="left")
+
+    # サイドバーで何位まで見るか選択
     st.sidebar.header("⚙️ 表示設定")
+    top_n = st.sidebar.slider("表示する順位（上位何カテゴリまで）", 5, 100, 20)
 
-    # 見る時間（スナップショット）を選ぶ（デフォルトは最新）
-    selected_label = st.sidebar.selectbox(
-        "見る時間（スナップショット）",
-        snapshot_labels,
-        index=len(snapshot_labels) - 1,
+    show_df = summary.head(top_n)
+
+    st.dataframe(show_df, use_container_width=True)
+
+    # ---- バーグラフ（上位カテゴリの累計視聴者数）----
+    st.subheader("📈 累計視聴者数（バーグラフ）")
+
+    fig_bar = px.bar(
+        show_df,
+        x="カテゴリ",
+        y="累計視聴者数",
+        title=f"上位 {top_n} カテゴリの累計視聴者数",
+        labels={"カテゴリ": "カテゴリ", "累計視聴者数": "累計視聴者数"},
     )
-    selected_snapshot = snapshots[snapshot_labels.index(selected_label)]
+    fig_bar.update_layout(xaxis_tickangle=-45, height=500)
+    st.plotly_chart(fig_bar, use_container_width=True)
 
-    # この時間の「狙い目」として何件出すか
-    nerai_top_n = st.sidebar.slider("この時間の狙い目 TOP 件数", 5, 50, 10)
-
-    # ヒートマップの見方を選ぶ
-    heatmap_mode = st.sidebar.radio(
-        "ヒートマップのスケール",
-        ["絶対値（視聴者数）", "カテゴリ内で0〜1に正規化"],
-    )
-
-    # グラフ系の指標
-    metric = st.sidebar.selectbox(
-        "グラフ表示に使う指標",
-        ["viewers", "streamers", "competition_index"],
-        format_func=lambda m: {
-            "viewers": "👀 視聴者数",
-            "streamers": "🎤 配信者数",
-            "competition_index": "⚔ 競争率（視聴者 ÷ 配信者）",
-        }[m],
-    )
-    top_n = st.sidebar.slider("グラフの上位カテゴリ数", 5, 50, 20)
-
-    st.subheader(f"📌 選択中の時間： {selected_snapshot.strftime('%Y-%m-%d %H:%M')}")
-
-    # この時間のデータだけ取り出し
-    df_now = df[df["snapshot"] == selected_snapshot].copy()
-    df_now["competition_index"] = df_now["viewers"] / df_now["streamers"].replace(0, 1)
-
-    # ---- この時間の「狙い目」ランキング ----
-    st.subheader("🕒 この時間の狙い目カテゴリ")
-
-    nerai_df = df_now.copy()
-    nerai_df = nerai_df.sort_values(
-        ["competition_index", "viewers"], ascending=[False, False]
-    ).reset_index(drop=True)
-
-    show_nerai = nerai_df.head(nerai_top_n).copy()
-    show_nerai = show_nerai.rename(
-        columns={
-            "name": "カテゴリ",
-            "streamers": "配信者数",
-            "viewers": "視聴者数",
-            "competition_index": "競争率（視聴÷配信）",
-        }
-    )
-    show_nerai = show_nerai[["カテゴリ", "配信者数", "視聴者数", "競争率（視聴÷配信）"]]
-
-    st.dataframe(show_nerai, use_container_width=True)
-    st.caption("※ 競争率（視聴÷配信）が高いほど、その時間帯で『一人あたりの取り分』が大きく狙い目です。")
-
-    # ---- 全期間の市場タイプ分類 ----
-    st.subheader("🧠 全期間で見た市場タイプ（成長・衰退など）")
-
-    market_df = classify_market(df)
-    section_list = [
-        ("💎 狙い目（需要 > 供給）", "💎"),
-        ("🚀 成長市場（視聴者↑ 配信者↑）", "🚀"),
-        ("⚠ 過剰供給（飽和状態）", "⚠"),
-        ("📉 衰退市場（視聴者↓ 配信者↓）", "📉"),
-        ("😐 安定市場（横ばい）", "😐"),
-    ]
-
-    for section, key in section_list:
-        subset = market_df[market_df["市場タイプ"].str.startswith(key)]
-        if not subset.empty:
-            st.markdown(f"### {section}")
-            st.dataframe(subset.reset_index(drop=True))
-
-    # ---- 選択時間を基準にしたグラフ ----
-
-    # 1) トレンドグラフ（全期間）
-    st.subheader(f"📈 上位 {top_n} カテゴリの推移（{metric}）")
-
-    latest_for_metric = (
-        df[df["snapshot"] == selected_snapshot]
-        .sort_values(metric, ascending=False)
-        .head(top_n)
-    )
-    selected_names = latest_for_metric["name"].tolist()
-    df_view = df[df["name"].isin(selected_names)]
-
-    trend = df_view.pivot_table(index="snapshot", columns="name", values=metric)
-    fig_line = px.line(
-        trend,
-        markers=True,
-        labels={"snapshot": "日時", "value": "値", "variable": "カテゴリ"},
-        title="カテゴリ推移グラフ",
-    )
-    fig_line.update_layout(height=400)
-    st.plotly_chart(fig_line, use_container_width=True)
-
-    # 2) この時間のバブルチャート
-    st.subheader("🫧 この時間の市場ポジション（視聴者×配信者×競争率）")
-    fig_bubble = px.scatter(
-        df_now,
-        x="streamers",
-        y="viewers",
-        size="competition_index",
-        color="competition_index",
-        hover_name="name",
-        labels={
-            "streamers": "配信者数",
-            "viewers": "視聴者数",
-            "competition_index": "競争率（視聴者 ÷ 配信者）",
-        },
-        title="カテゴリ分布バブルチャート（選択中の時間）",
-        size_max=60,
-        color_continuous_scale="Turbo",
-    )
-    fig_bubble.update_layout(height=450)
-    st.plotly_chart(fig_bubble, use_container_width=True)
-
-    # 3) 視聴者数ヒートマップ（時間推移）
-    st.subheader("🔥 視聴者数ヒートマップ（時間推移）")
-
-    heatmap_df = df_view.pivot_table(
-        index="name", columns="snapshot", values="viewers", fill_value=0
-    )
-
-    # 列名（日時）を文字列にして読みやすく
-    heatmap_df.columns = [c.strftime("%Y-%m-%d\n%H:%M") for c in heatmap_df.columns]
-
-    # スケール切り替え
-    if heatmap_mode == "カテゴリ内で0〜1に正規化":
-        max_vals = heatmap_df.max(axis=1).replace(0, 1)
-        heatmap_norm = heatmap_df.div(max_vals, axis=0)
-        display_df = heatmap_norm
-        color_label = "相対視聴者数（カテゴリ内0〜1）"
-    else:
-        display_df = heatmap_df
-        color_label = "視聴者数"
-
-    fig_heatmap = px.imshow(
-        display_df,
-        aspect="auto",
-        color_continuous_scale="Inferno",
-        labels={"color": color_label},
-        title="カテゴリ × 時間 の視聴者数推移",
-    )
-    fig_heatmap.update_layout(height=500)
-    st.plotly_chart(fig_heatmap, use_container_width=True)
-
-    st.success(
-        "💡 ざっくり：『この時間の狙い目』＝ 上の表で競争率が高く、視聴者数もそこそこあるカテゴリ。"
+    st.caption(
+        "※ 累計視聴者数 = 取得した全スナップショットでの視聴者数の合計です。"
+        "長期的にどのカテゴリが強いかを見る指標として使えます。"
     )
 
 
