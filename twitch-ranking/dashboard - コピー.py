@@ -179,54 +179,25 @@ def main():
     # ---- サマリテーブル作成 ----
     summary = build_summary(df)
 
-   # --- Sidebar filters ---
-st.sidebar.header("⚙️ 表示設定")
+    # ---- サイドバー設定 ----
+    st.sidebar.header("⚙️ 表示設定")
 
-# 期間フィルタ
-min_date = df["snapshot"].min()
-max_date = df["snapshot"].max()
-
-start, end = st.sidebar.date_input(
-    "データ期間を選択",
-    value=(min_date, max_date),
-    min_value=min_date,
-    max_value=max_date
-)
-
-df = df[(df["snapshot"] >= pd.to_datetime(start)) & (df["snapshot"] <= pd.to_datetime(end))]
-
-# カテゴリフィルタ（複数選択 + 全選択ボタン）
-all_categories = sorted(df["name"].unique())
-
-if st.sidebar.button("全カテゴリ選択"):
-    selected_categories = all_categories
-else:
-    selected_categories = st.sidebar.multiselect(
-        "カテゴリ（複数選択可）",
-        all_categories,
-        default=all_categories
+    # ランキング基準（デフォルトは成長スコア）
+    ranking_metric = st.sidebar.selectbox(
+        "ランキング基準",
+        [
+            "成長スコア",
+            "累計視聴者数",
+            "平均視聴者数",
+            "最大視聴者数",
+            "最新視聴者数",
+            "平均競争率",
+            "視聴者数増加量",
+            "視聴者増加率",
+            "ランク改善量",
+        ],
+        index=0,
     )
-
-df = df[df["name"].isin(selected_categories)]
-
-# ランキング基準
-ranking_metric = st.sidebar.selectbox(
-    "ランキング基準",
-    [
-        "成長スコア",
-        "視聴者数増加量",
-        "視聴者増加率",
-        "ランク改善量",
-        "最新視聴者数",
-        "累計視聴者数",
-        "平均視聴者数",
-        "最大視聴者数",
-        "平均競争率",
-    ],
-)
-
-top_n = st.sidebar.slider("表示数", 5, 100, 20)
-
 
     # 最低データ数フィルタ
     max_samples = int(summary["サンプル数"].max())
