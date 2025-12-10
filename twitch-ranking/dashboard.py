@@ -57,7 +57,7 @@ def load_history():
 def build_summary(df: pd.DataFrame) -> pd.DataFrame:
     """カテゴリごとの累計・平均・最大・初回/最新などまとめたサマリを作る"""
 
-    # 基本集計
+    # 基本集計＋ばらつき
     agg = df.groupby("name").agg(
         累計視聴者数=("viewers", "sum"),
         累計配信者数=("streamers", "sum"),
@@ -65,6 +65,7 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
         最大視聴者数=("viewers", "max"),
         サンプル数=("viewers", "count"),
         平均競争率=("competition_index", "mean"),
+        視聴者数標準偏差=("viewers", "std"),
     )
 
     # 初回
@@ -97,16 +98,26 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
         )
     )
 
-    summary = agg.join(first).join(last)
+    # ピーク（視聴者数が最大の瞬間）
+    peak_idx = df.groupby("name")["viewers"].idxmax()
+    peak = (
+        df.loc[peak_idx, ["name", "snapshot", "viewers"]]
+        .set_index("name")
+        .rename(columns={"snapshot": "ピーク日時", "viewers": "ピーク視聴者数"})
+    )
+
+    summary = agg.join(first).join(last).join(peak)
+
+    # 派生指標
+    summary["視聴者数増加量"] = summary["最新視聴者数"] - summary["初回視聴者数"]
+    summary["ランク改善量"] = summary["初回ランク"] - summary["最新ランク"]  # 正数ならランクUP
 
     # 小数処理
     summary["平均視聴者数"] = summary["平均視聴者数"].round(1)
     summary["平均競争率"] = summary["平均競争率"].round(2)
+    summary["視聴者数標準偏差"] = summary["視聴者数標準偏差"].fillna(0).round(1)
 
     summary = summary.reset_index().rename(columns={"name": "カテゴリ"})
-
-    # 累計視聴者数の降順で並べる
-    summary = summary.sort_values("累計視聴者数", ascending=False).reset_index(drop=True)
 
     return summary
 
@@ -139,16 +150,51 @@ def main():
     # ---- サイドバー設定 ----
     st.sidebar.header("⚙️ 表示設定")
 
-    top_n = st.sidebar.slider("ランキング表示数（上位何カテゴリまで）", 5, 100, 20)
-
-    selected_category = st.sidebar.selectbox(
-        "詳細を見たいカテゴリ",
-        summary["カテゴリ"].tolist(),
-        index=0,
+    # ランキング基準を選択
+    ranking_metric = st.sidebar.selectbox(
+        "ランキング基準",
+        [
+            "累計視聴者数",
+            "平均視聴者数",
+            "最大視聴者数",
+            "最新視聴者数",
+            "平均競争率",
+            "視聴者数増加量",
+            "ランク改善量",
+        ],
     )
 
+    # 最低データ数フィルタ
+    max_samples = int(summary["サンプル数"].max())
+    min_samples = st.sidebar.slider("最低データ数（スナップショット数）", 1, max_samples, 3)
+
+    # 累計視聴者数フィルタ
+    min_total_viewers = st.sidebar.number_input("最低累計視聴者数", value=0, step=1000)
+
+    # カテゴリ名フィルタ（部分一致）
+    name_filter = st.sidebar.text_input("カテゴリ名フィルタ（部分一致）", "")
+
+    # ランキング表示数
+    top_n = st.sidebar.slider("ランキング表示数（上位何カテゴリまで）", 5, 100, 20)
+
+    # ---- フィルタ適用 ----
+    filtered = summary.copy()
+    filtered = filtered[filtered["サンプル数"] >= min_samples]
+    filtered = filtered[filtered["累計視聴者数"] >= min_total_viewers]
+
+    if name_filter.strip():
+        filtered = filtered[filtered["カテゴリ"].str.contains(name_filter, case=False, na=False)]
+
+    if filtered.empty:
+        st.warning("条件に合うカテゴリがありません。フィルタ条件を緩めてください。")
+        st.stop()
+
+    # ランキング基準でソート
+    # ※ 全部「値が大きいほど良い」という扱いにしている
+    filtered = filtered.sort_values(ranking_metric, ascending=False).reset_index(drop=True)
+
     # ---- 累計ランキングテーブル ----
-    st.subheader("🎉 累計視聴者数ランキング（全期間）")
+    st.subheader(f"🎉 ランキング（基準：{ranking_metric}）")
 
     show_cols = [
         "カテゴリ",
@@ -156,34 +202,46 @@ def main():
         "累計配信者数",
         "平均視聴者数",
         "最大視聴者数",
+        "最新視聴者数",
         "平均競争率",
+        "視聴者数増加量",
+        "ランク改善量",
+        "視聴者数標準偏差",
         "サンプル数",
         "初回取得日時",
         "最新取得日時",
         "初回ランク",
         "最新ランク",
+        "ピーク視聴者数",
+        "ピーク日時",
     ]
 
-    st.dataframe(summary[show_cols].head(top_n), use_container_width=True)
+    st.dataframe(filtered[show_cols].head(top_n), use_container_width=True)
 
-    # ---- 上位カテゴリの累計視聴者数バーグラフ ----
-    st.subheader("📈 上位カテゴリの累計視聴者数")
+    # ---- 上位カテゴリのバーグラフ ----
+    st.subheader(f"📈 上位カテゴリ（基準：{ranking_metric}）")
 
     fig_bar = px.bar(
-        summary.head(top_n),
+        filtered.head(top_n),
         x="カテゴリ",
-        y="累計視聴者数",
-        title=f"上位 {top_n} カテゴリの累計視聴者数",
-        labels={"カテゴリ": "カテゴリ", "累計視聴者数": "累計視聴者数"},
+        y=ranking_metric,
+        title=f"上位 {top_n} カテゴリの {ranking_metric}",
+        labels={"カテゴリ": "カテゴリ", ranking_metric: ranking_metric},
     )
     fig_bar.update_layout(xaxis_tickangle=-45, height=500)
     st.plotly_chart(fig_bar, use_container_width=True)
 
     # ---- 選択したカテゴリの詳細 ----
-    st.subheader(f"🔍 カテゴリ詳細：{selected_category}")
+    st.subheader("🔍 カテゴリ詳細")
+
+    selected_category = st.selectbox(
+        "詳細を見たいカテゴリを選択",
+        filtered["カテゴリ"].tolist(),
+        index=0,
+    )
 
     df_cat = df[df["name"] == selected_category].sort_values("snapshot")
-    cat_summary = summary[summary["カテゴリ"] == selected_category].iloc[0]
+    cat_summary = filtered[filtered["カテゴリ"] == selected_category].iloc[0]
 
     # 期間（Timedelta）を計算
     start_dt = cat_summary["初回取得日時"]
@@ -203,11 +261,19 @@ def main():
     col5.metric("平均競争率", f"{cat_summary['平均競争率']:.2f}")
     col6.metric("データ数（スナップショット数）", int(cat_summary["サンプル数"]))
 
-    # 初回ランク・最新ランク・期間
+    # 追加メトリクス（増加量・ランク改善・ばらつき）
+    col7, col8, col9 = st.columns(3)
+    col7.metric("視聴者数増加量", int(cat_summary["視聴者数増加量"]))
+    col8.metric("ランク改善量（+でランクUP）", int(cat_summary["ランク改善量"]))
+    col9.metric("視聴者数のばらつき（標準偏差）", f"{cat_summary['視聴者数標準偏差']:.1f}")
+
+    # 初回ランク・最新ランク・期間・ピーク情報
     st.markdown(
         f"- 初回取得日時：**{start_dt}**（ランク: {int(cat_summary['初回ランク'])}）  \n"
         f"- 最新取得日時：**{end_dt}**（ランク: {int(cat_summary['最新ランク'])}）  \n"
-        f"- 期間：**約 {days} 日（≒ {hours} 時間）**"
+        f"- 期間：**約 {days} 日（≒ {hours} 時間）**  \n"
+        f"- ピーク視聴者数：**{int(cat_summary['ピーク視聴者数'])}**"
+        f"（ピーク日時: {cat_summary['ピーク日時']}）"
     )
 
     # ---- 視聴者数の推移グラフ ----
