@@ -201,7 +201,7 @@ def main():
 
     # 最低データ数フィルタ
     max_samples = int(summary["サンプル数"].max())
-    min_samples = st.sidebar.slider("最低データ数（スナップショット数）", 1, max_samples, 3)
+    min_samples = st.sidebar.slider("最低データ数（スナップショット数）", 1, max_samples, summary["サンプル数"].max())
 
     # 累計視聴者数フィルタ
     min_total_viewers = st.sidebar.number_input("最低累計視聴者数", value=0, step=1000)
