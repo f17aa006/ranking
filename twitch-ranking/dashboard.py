@@ -15,8 +15,9 @@ def load_history():
     pattern = os.path.join(DATA_DIR, "twitch_ranking_*.csv")
     files = sorted(glob.glob(pattern))
 
+    # CSV が1つも無い場合は None を返す（RuntimeError しない）
     if not files:
-        raise RuntimeError("⚠ data/ フォルダに履歴CSVがありません。データ収集スクリプトが動いているか確認してください。")
+        return None
 
     records = []
     for path in files:
@@ -75,8 +76,18 @@ def main():
     st.title("📊 Twitch カテゴリ分析ダッシュボード（日本語版）")
 
     df = load_history()
-    latest_snap = df["snapshot"].max()
 
+    # data/ にCSVが無い場合はここでメッセージを出して終了
+    if df is None:
+        st.error(
+            "data/ フォルダに履歴CSVがありません。\n\n"
+            "・まずローカル環境で Twitch データ収集スクリプトを実行し、\n"
+            "・data/ 以下に twitch_ranking_YYYY-MM-DD_HH-MM.csv が作成されていることを確認し、\n"
+            "・その data/ フォルダごと GitHub にアップロードしてください。"
+        )
+        st.stop()
+
+    latest_snap = df["snapshot"].max()
     st.subheader(f"📌 最新データ取得日時： {latest_snap.strftime('%Y-%m-%d %H:%M')}")
 
     # ---- サイドバー ----
