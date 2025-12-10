@@ -55,7 +55,7 @@ def load_history():
 
 
 def build_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """カテゴリごとの累計・平均・最大・最新などまとめたサマリを作る"""
+    """カテゴリごとの累計・平均・最大・初回/最新などまとめたサマリを作る"""
 
     # 基本集計
     agg = df.groupby("name").agg(
@@ -67,7 +67,7 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
         平均競争率=("competition_index", "mean"),
     )
 
-    # 最初と最後のスナップショット
+    # 初回
     first = (
         df.sort_values("snapshot")
         .groupby("name")
@@ -82,6 +82,7 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
         )
     )
 
+    # 最新
     last = (
         df.sort_values("snapshot")
         .groupby("name")
@@ -98,7 +99,7 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
 
     summary = agg.join(first).join(last)
 
-    # 表示用整形
+    # 小数処理
     summary["平均視聴者数"] = summary["平均視聴者数"].round(1)
     summary["平均競争率"] = summary["平均競争率"].round(2)
 
@@ -111,8 +112,8 @@ def build_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main():
-    st.set_page_config(page_title="Twitch カテゴリ分析（累計＋詳細）", layout="wide")
-    st.title("📊 Twitch カテゴリ分析ダッシュボード（累計＋詳細）")
+    st.set_page_config(page_title="Twitch カテゴリ詳細分析", layout="wide")
+    st.title("📊 Twitch カテゴリ詳細分析ダッシュボード")
 
     df, error_msg = load_history()
 
@@ -140,8 +141,6 @@ def main():
 
     top_n = st.sidebar.slider("ランキング表示数（上位何カテゴリまで）", 5, 100, 20)
 
-    # カテゴリ選択（詳細表示用）
-    default_category = summary.iloc[0]["カテゴリ"]
     selected_category = st.sidebar.selectbox(
         "詳細を見たいカテゴリ",
         summary["カテゴリ"].tolist(),
@@ -180,19 +179,20 @@ def main():
     fig_bar.update_layout(xaxis_tickangle=-45, height=500)
     st.plotly_chart(fig_bar, use_container_width=True)
 
-    st.caption(
-        "※ 累計視聴者数 = 取得した全スナップショットでの視聴者数の合計です。"
-        "長期的にどのカテゴリが強いかを見る指標として使えます。"
-    )
-
     # ---- 選択したカテゴリの詳細 ----
     st.subheader(f"🔍 カテゴリ詳細：{selected_category}")
 
     df_cat = df[df["name"] == selected_category].sort_values("snapshot")
-
-    # サマリ行を取り出し
     cat_summary = summary[summary["カテゴリ"] == selected_category].iloc[0]
 
+    # 期間（Timedelta）を計算
+    start_dt = cat_summary["初回取得日時"]
+    end_dt = cat_summary["最新取得日時"]
+    duration = end_dt - start_dt
+    days = duration.days
+    hours = int(duration.total_seconds() // 3600)
+
+    # 上段メトリクス（最新・累計・平均・最大・平均競争率・データ数）
     col1, col2, col3 = st.columns(3)
     col1.metric("最新視聴者数", int(cat_summary["最新視聴者数"]))
     col2.metric("累計視聴者数", int(cat_summary["累計視聴者数"]))
@@ -201,16 +201,16 @@ def main():
     col4, col5, col6 = st.columns(3)
     col4.metric("最大視聴者数", int(cat_summary["最大視聴者数"]))
     col5.metric("平均競争率", f"{cat_summary['平均競争率']:.2f}")
-    col6.metric("データポイント数", int(cat_summary["サンプル数"]))
+    col6.metric("データ数（スナップショット数）", int(cat_summary["サンプル数"]))
 
+    # 初回ランク・最新ランク・期間
     st.markdown(
-        f"- 初回取得日時：**{cat_summary['初回取得日時']}**"
-        f"（ランク: {int(cat_summary['初回ランク'])}）  \n"
-        f"- 最新取得日時：**{cat_summary['最新取得日時']}**"
-        f"（ランク: {int(cat_summary['最新ランク'])}）"
+        f"- 初回取得日時：**{start_dt}**（ランク: {int(cat_summary['初回ランク'])}）  \n"
+        f"- 最新取得日時：**{end_dt}**（ランク: {int(cat_summary['最新ランク'])}）  \n"
+        f"- 期間：**約 {days} 日（≒ {hours} 時間）**"
     )
 
-    # 時系列グラフ：視聴者数の推移
+    # ---- 視聴者数の推移グラフ ----
     st.subheader("📉 視聴者数の推移")
 
     fig_view = px.line(
@@ -224,7 +224,7 @@ def main():
     fig_view.update_layout(height=400)
     st.plotly_chart(fig_view, use_container_width=True)
 
-    # 時系列グラフ：配信者数と競争率の推移
+    # ---- 配信者数＆競争率の推移グラフ ----
     st.subheader("📡 配信者数・競争率の推移")
 
     fig_stream = px.line(
@@ -242,7 +242,7 @@ def main():
     fig_stream.update_layout(height=400)
     st.plotly_chart(fig_stream, use_container_width=True)
 
-    # 生データの一部も見せる
+    # ---- 生データ ----
     st.subheader("📄 生データ（このカテゴリの全レコード）")
     show_raw = df_cat[["snapshot", "rank", "streamers", "viewers", "competition_index"]]
     show_raw = show_raw.rename(
