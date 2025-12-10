@@ -21,7 +21,7 @@ def load_history():
     files = sorted(glob.glob(pattern))
 
     if not files:
-        return None, "data/ フォルダに twitch_ranking_*.csv がありません。履歴CSVをGitHubにアップしてください。"
+        return None, "data/ フォルダに twitch_ranking_*.csv がありません。履歴CSVを GitHub にアップしてください。"
 
     records = []
     for path in files:
@@ -108,12 +108,22 @@ def main():
     # ---- サイドバー ----
     st.sidebar.header("⚙️ 表示設定")
 
-    # 見る時間（スナップショット）を選ぶ
-    selected_label = st.sidebar.selectbox("見る時間（スナップショット）", snapshot_labels, index=len(snapshot_labels) - 1)
+    # 見る時間（スナップショット）を選ぶ（デフォルトは最新）
+    selected_label = st.sidebar.selectbox(
+        "見る時間（スナップショット）",
+        snapshot_labels,
+        index=len(snapshot_labels) - 1,
+    )
     selected_snapshot = snapshots[snapshot_labels.index(selected_label)]
 
     # この時間の「狙い目」として何件出すか
     nerai_top_n = st.sidebar.slider("この時間の狙い目 TOP 件数", 5, 50, 10)
+
+    # ヒートマップの見方を選ぶ
+    heatmap_mode = st.sidebar.radio(
+        "ヒートマップのスケール",
+        ["絶対値（視聴者数）", "カテゴリ内で0〜1に正規化"],
+    )
 
     # グラフ系の指標
     metric = st.sidebar.selectbox(
@@ -136,14 +146,11 @@ def main():
     # ---- この時間の「狙い目」ランキング ----
     st.subheader("🕒 この時間の狙い目カテゴリ")
 
-    # 条件はシンプルに「競争率が高い順」＋「配信者が多すぎないもの」を上に
     nerai_df = df_now.copy()
-    # 競争率でソート（視聴者が0ばかりの変なカテゴリを上にしないように視聴者数でもソート）
     nerai_df = nerai_df.sort_values(
         ["competition_index", "viewers"], ascending=[False, False]
     ).reset_index(drop=True)
 
-    # 表示用に列を日本語名に変換
     show_nerai = nerai_df.head(nerai_top_n).copy()
     show_nerai = show_nerai.rename(
         columns={
@@ -158,7 +165,7 @@ def main():
     st.dataframe(show_nerai, use_container_width=True)
     st.caption("※ 競争率（視聴÷配信）が高いほど、その時間帯で『一人あたりの取り分』が大きく狙い目です。")
 
-    # ---- 全期間の市場タイプ分類（おまけ）----
+    # ---- 全期間の市場タイプ分類 ----
     st.subheader("🧠 全期間で見た市場タイプ（成長・衰退など）")
 
     market_df = classify_market(df)
@@ -220,18 +227,34 @@ def main():
     fig_bubble.update_layout(height=450)
     st.plotly_chart(fig_bubble, use_container_width=True)
 
-    # 3) この時間を起点にしたヒートマップ（視聴者数）
+    # 3) 視聴者数ヒートマップ（時間推移）
     st.subheader("🔥 視聴者数ヒートマップ（時間推移）")
-    heatmap = df_view.pivot_table(
+
+    heatmap_df = df_view.pivot_table(
         index="name", columns="snapshot", values="viewers", fill_value=0
     )
+
+    # 列名（日時）を文字列にして読みやすく
+    heatmap_df.columns = [c.strftime("%Y-%m-%d\n%H:%M") for c in heatmap_df.columns]
+
+    # スケール切り替え
+    if heatmap_mode == "カテゴリ内で0〜1に正規化":
+        max_vals = heatmap_df.max(axis=1).replace(0, 1)
+        heatmap_norm = heatmap_df.div(max_vals, axis=0)
+        display_df = heatmap_norm
+        color_label = "相対視聴者数（カテゴリ内0〜1）"
+    else:
+        display_df = heatmap_df
+        color_label = "視聴者数"
+
     fig_heatmap = px.imshow(
-        heatmap,
+        display_df,
         aspect="auto",
         color_continuous_scale="Inferno",
-        labels={"color": "視聴者数"},
+        labels={"color": color_label},
         title="カテゴリ × 時間 の視聴者数推移",
     )
+    fig_heatmap.update_layout(height=500)
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
     st.success(

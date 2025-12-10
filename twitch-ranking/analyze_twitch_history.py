@@ -5,7 +5,8 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import pandas as pd
 
-DATA_DIR = "data"
+DATA_DIR = r"C:\Users\user\Documents\GitHub\ranking\twitch-ranking\data"
+
 
 
 def load_history(data_dir=DATA_DIR):
