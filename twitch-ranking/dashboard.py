@@ -281,6 +281,7 @@ def main():
 
     # ランキング基準でソート（大きいほど良い前提）
     filtered = filtered.sort_values(ranking_metric, ascending=False).reset_index(drop=True)
+    filtered.insert(0, "順位", filtered.index + 1)
 
     # ---- ランキングテーブル ----
     st.subheader(f"🎉 成長ランキング（基準：{ranking_metric}）")
@@ -306,8 +307,7 @@ def main():
         "ピーク視聴者数",
         "ピーク日時",
     ]
-    filtered = filtered.sort_values(ranking_metric, ascending=False).reset_index(drop=True)
-    filtered.insert(0, "順位", filtered.index + 1)
+    
     st.dataframe(filtered[show_cols].head(top_n), use_container_width=True)
 
     # ---- 上位カテゴリのバーグラフ ----
