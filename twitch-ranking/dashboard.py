@@ -284,7 +284,8 @@ def main():
 
     # ---- ランキングテーブル ----
     st.subheader(f"🎉 成長ランキング（基準：{ranking_metric}）")
-
+    filtered = filtered.sort_values(ranking_metric, ascending=False).reset_index(drop=True)
+    filtered.insert(0, "順位", filtered.index + 1)
     show_cols = [
         "カテゴリ",
         "成長タイプ",
