@@ -45,7 +45,6 @@ def load_history():
         df["snapshot"] = snapshot
         records.append(df)
 
-    df_all = pd.concat(records, ignore_index=True)
     df_all["snapshot"] = pd.to_datetime(df_all["snapshot"])
 
     # 競争率（視聴者 ÷ 配信者）
