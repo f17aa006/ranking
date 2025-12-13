@@ -28,6 +28,50 @@ def load_history():
         filename = os.path.basename(path)
         tag = filename.replace("twitch_ranking_", "").replace(".csv", "")
 
+        try:
+            snapshot = datetime.strptime(tag, "%Y-%m-%d_%H-%M")
+        except ValueError:
+            return None, f"ファイル名 {filename} の日時部分が想定外です。（twitch_ranking_YYYY-MM-DD_HH-MM.csv の形式にしてください）"
+
+        df = pd.read_csv(path)
+
+        required_cols = {"rank", "name", "streamers", "viewers"}
+        missing = required_cols - set(df.columns)
+        if missing:
+            return None, f"CSV {filename} に必要なカラム {missing} がありません。収集スクリプト側の出力形式を確認してください。"
+
+        df["snapshot"] = snapshot
+        records.append(df)
+
+    df_all = pd.concat(records, ignore_index=True)
+    df_all["snapshot"] = pd.to_datetime(df_all["snapshot"])
+
+    # ★ rank を数値化して 0 始まりなら 1 始まりに補正
+    df_all["rank"] = pd.to_numeric(df_all["rank"], errors="coerce").fillna(0).astype(int)
+    if df_all["rank"].min() == 0:
+        df_all["rank"] = df_all["rank"] + 1
+
+    # 競争率（視聴者 ÷ 配信者）
+    df_all["competition_index"] = df_all["viewers"] / df_all["streamers"].replace(0, 1)
+
+    return df_all, None
+
+    """data/ 以下の Twitch 履歴データをまとめて読み込む"""
+
+    if not os.path.isdir(DATA_DIR):
+        return None, "data フォルダが見つかりません。ダッシュボードと同じ階層に data/ を置いてください。"
+
+    pattern = os.path.join(DATA_DIR, "twitch_ranking_*.csv")
+    files = sorted(glob.glob(pattern))
+
+    if not files:
+        return None, "data/ フォルダに twitch_ranking_*.csv がありません。履歴CSVを GitHub にアップしてください。"
+
+    records = []
+    for path in files:
+        filename = os.path.basename(path)
+        tag = filename.replace("twitch_ranking_", "").replace(".csv", "")
+
         # ファイル名の日時部分を解析（twitch_ranking_YYYY-MM-DD_HH-MM.csv）
         try:
             snapshot = datetime.strptime(tag, "%Y-%m-%d_%H-%M")
