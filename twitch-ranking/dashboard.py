@@ -309,7 +309,7 @@ def main():
         "ピーク日時",
     ]
     
-    st.dataframe(filtered[show_cols].head(top_n), use_container_width=True,hide_index=TrueS)
+    st.dataframe(filtered[show_cols].head(top_n), use_container_width=True,hide_index=True)
 
     # ---- 上位カテゴリのバーグラフ ----
     st.subheader(f"📈 上位カテゴリ（基準：{ranking_metric}）")
