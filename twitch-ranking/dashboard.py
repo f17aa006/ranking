@@ -48,13 +48,6 @@ def load_history():
     df_all = pd.concat(records, ignore_index=True)
     df_all["snapshot"] = pd.to_datetime(df_all["snapshot"])
 
-    # 競争率（視聴者 ÷ 配信者）
-    df_all["competition_index"] = df_all["viewers"] / df_all["streamers"].replace(0, 1)
-    
-    df_all = pd.concat(records, ignore_index=True)
-
-    df_all["snapshot"] = pd.to_datetime(df_all["snapshot"])
-
     # ★ 追加：rankを数値化＆0始まりなら1足して補正
     df_all["rank"] = pd.to_numeric(df_all["rank"], errors="coerce").fillna(0).astype(int)
     if df_all["rank"].min() == 0:
@@ -63,6 +56,12 @@ def load_history():
     # 競争率（視聴者 ÷ 配信者）
     df_all["competition_index"] = df_all["viewers"] / df_all["streamers"].replace(0, 1)
 
+    return df_all, None
+    df_all["snapshot"] = pd.to_datetime(df_all["snapshot"])
+
+    # 競争率（視聴者 ÷ 配信者）
+    df_all["competition_index"] = df_all["viewers"] / df_all["streamers"].replace(0, 1)
+    
     return df_all, None
 
 
